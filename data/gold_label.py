@@ -1,6 +1,7 @@
 """
 Generate completions to the proxy training data using the policy, then rate them
 using the gold reward model and create a pairwise preference dataset for proxy RM training.
+Writes 'train_proxy_rated' to disk.
 """
 
 import torch
