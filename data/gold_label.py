@@ -1,70 +1,40 @@
 """
-Generate completions to the proxy training data using the policy, then rate them
-using the gold reward model and create a pairwise preference dataset for proxy RM training.
+Use the gold RM to score the completions of the policy
+and create a pairwise preference dataset.
 Writes 'train_proxy_rated' to disk.
 """
 
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from datasets import load_from_disk, Dataset
-from vllm import LLM, SamplingParams
 from itertools import combinations
 from collections import defaultdict
 
-policy_name = "Qwen/Qwen2.5-1.5B-Instruct"
 gold_name = "Skywork/Skywork-Reward-V2-Llama-3.1-8B"
-
-K = 4 # completions per prompt
-scoring_batch_size = 64
-max_continuation_length = 900
+scoring_batch_size = 32
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-sampling_params = SamplingParams(max_tokens=max_continuation_length, n=K, temperature=1.0)
-policy = LLM(model=policy_name, gpu_memory_utilization=0.8)
-policy_tokenizer = AutoTokenizer.from_pretrained(policy_name)
-
 gold_rm = AutoModelForSequenceClassification.from_pretrained(
     gold_name,
-    device_map="auto",
+    device_map=device,
     dtype=torch.bfloat16,
 )
 gold_tokenizer = AutoTokenizer.from_pretrained(gold_name)
 
-data = [entry["prompt"] for entry in load_from_disk("data/datasets/train_proxy")]
-prompts = [policy_tokenizer.apply_chat_template(
-    [{"role": "user", "content": prompt}],
-    tokenize=False,
-    add_generation_prompt=True
-) for prompt in data]
+completions = load_from_disk("data/datasets/train_proxy_completions")
 
-outputs = policy.generate(prompts, sampling_params)
+prompts = completions["prompt"]
+responses = completions["response"]
+entry_idx = completions["prompt_idx"]
 
-entries = []
-
-for out, prompt in zip(outputs, data):
-
-    entry = {
-        "prompt": prompt,
-        "responses": []
-    }
-
-    for response in out.outputs:
-        if response.finish_reason == "length":
-            continue
-        entry["responses"].append(response.text)
-
-    entries.append(entry)
-
-input_texts, entry_idx = [], []
-for i, entry in enumerate(entries):
-    for response in entry["responses"]:
-        conv = [
-            {"role": "user", "content": entry["prompt"]},
-            {"role": "assistant", "content": response}
-        ]
-        input_texts.append(gold_tokenizer.apply_chat_template(conv, tokenize=False))
-        entry_idx.append(i)
+input_texts = [
+    gold_tokenizer.apply_chat_template(
+        [{"role": "user", "content": p}, {"role": "assistant", "content": r}],
+        tokenize=False
+    )
+    for p, r in zip(prompts, responses)
+]
 
 scores = []
 for start in range(0, len(input_texts), scoring_batch_size):
@@ -77,9 +47,9 @@ for start in range(0, len(input_texts), scoring_batch_size):
     if start % (scoring_batch_size*10) == 0:
         print(f"[scoring] {start}/{len(input_texts)}", end="\r")
 
-score_dict = defaultdict(list)
-for idx, score in zip(entry_idx, scores):
-    score_dict[idx].append(score)
+rows_by_prompt = defaultdict(list)
+for row, idx in enumerate(entry_idx):
+    rows_by_prompt[idx].append(row)
 
 gold_pairs = {
     "prompt": [],
@@ -87,13 +57,13 @@ gold_pairs = {
     "rejected": []
 }
 
-for idx in score_dict:
-    for pair in combinations(range(len(score_dict[idx])), 2):
-        gold_pairs["prompt"].append(entries[idx]["prompt"])
+for rows in rows_by_prompt.values():
+    for a, b in combinations(rows, 2):
+        chosen, rejected = (a, b) if scores[a] > scores[b] else (b, a)
+        gold_pairs["prompt"].append(prompts[a])
+        gold_pairs["chosen"].append(responses[chosen])
+        gold_pairs["rejected"].append(responses[rejected])
 
-        chosen_idx, rejected_idx = sorted(pair, key=lambda p: score_dict[idx][p], reverse=True)
-        gold_pairs["chosen"].append(entries[idx]["responses"][chosen_idx])
-        gold_pairs["rejected"].append(entries[idx]["responses"][rejected_idx])
 
 print(f"[done] {len(gold_pairs["prompt"])} preference pairs recorded.")
 
