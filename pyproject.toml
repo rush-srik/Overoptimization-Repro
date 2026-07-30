@@ -16,6 +16,8 @@ dependencies = [
 
 gen = [
     "vllm>=0.26",
+    # quack 0.5.0 targets cutlass-dsl 4.5.x (ThrMma); vLLM pins 4.6.0, which removed it
+    "quack-kernels>=0.6.0",
     "torch>=2.11",
     "transformers>=5.7",
     "trl>=1.9",
