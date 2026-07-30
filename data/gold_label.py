@@ -7,12 +7,14 @@ import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from datasets import load_from_disk, Dataset
 from vllm import LLM, SamplingParams
-import itertools
+from itertools import combinations
+from collections import defaultdict
 
 policy_name = "Qwen/Qwen2.5-1.5B-Instruct"
 gold_name = "Skywork/Skywork-Reward-V2-Llama-3.1-8B"
 
 K = 4 # completions per prompt
+scoring_batch_size = 64
 max_continuation_length = 900
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -24,8 +26,7 @@ policy_tokenizer = AutoTokenizer.from_pretrained(policy_name)
 gold_rm = AutoModelForSequenceClassification.from_pretrained(
     gold_name,
     device_map="auto",
-    torch_dtype=torch.bfloat16,
-    num_labels=1
+    dtype=torch.bfloat16,
 )
 gold_tokenizer = AutoTokenizer.from_pretrained(gold_name)
 
@@ -54,36 +55,46 @@ for out, prompt in zip(outputs, data):
 
     entries.append(entry)
 
+input_texts, entry_idx = [], []
+for i, entry in enumerate(entries):
+    for response in entry["responses"]:
+        conv = [
+            {"role": "user", "content": entry["prompt"]},
+            {"role": "assistant", "content": response}
+        ]
+        input_texts.append(gold_tokenizer.apply_chat_template(conv, tokenize=False))
+        entry_idx.append(i)
+
+scores = []
+for start in range(0, len(input_texts), scoring_batch_size):
+    batch = input_texts[start:start+scoring_batch_size]
+    inputs = gold_tokenizer(batch, return_tensors="pt", padding=True,
+                            add_special_tokens=False).to(gold_rm.device)
+    with torch.inference_mode():
+        scores.extend(gold_rm(**inputs).logits.squeeze(-1).float().tolist())
+
+    if start % (scoring_batch_size*10) == 0:
+        print(f"[scoring] {start}/{len(input_texts)}", end="\r")
+
+score_dict = defaultdict(list)
+for idx, score in zip(entry_idx, scores):
+    score_dict[idx].append(score)
+
 gold_pairs = {
     "prompt": [],
     "chosen": [],
     "rejected": []
 }
 
-for i, entry in enumerate(entries):
+for idx in score_dict:
+    for pair in combinations(range(len(score_dict[idx])), 2):
+        gold_pairs["prompt"].append(entries[idx]["prompt"])
 
-    scores = []
-    for response in entry["responses"]:
-        conv = [
-            {"role": "user", "content": entry["prompt"]},
-            {"role": "assistant", "content": response}
-        ]
-        text = gold_tokenizer.apply_chat_template(conv, tokenize=False)
-        inputs = gold_tokenizer(text, return_tensors="pt", add_special_tokens=False).to(gold_rm.device)
+        chosen_idx, rejected_idx = sorted(pair, key=lambda p: score_dict[idx][p], reverse=True)
+        gold_pairs["chosen"].append(entries[idx]["responses"][chosen_idx])
+        gold_pairs["rejected"].append(entries[idx]["responses"][rejected_idx])
 
-        with torch.no_grad():
-            scores.append((response, gold_rm(**inputs).logits[0][0].item()))
-
-    for pair in itertools.combinations(scores, 2):
-        gold_pairs["prompt"].append(entry["prompt"])
-
-        chosen_idx = max([0, 1], key=lambda idx: pair[idx][1])
-        gold_pairs["chosen"].append(pair[chosen_idx][0])
-        gold_pairs["rejected"].append(pair[1-chosen_idx][0])
-
-    print(f"[scoring] {i}/{len(entries)}", end="\r")
-
-print(f"[done] {len(gold_pairs)} preference pairs recorded.")
+print(f"[done] {len(gold_pairs["prompt"])} preference pairs recorded.")
 
 gold_dataset = Dataset.from_dict(gold_pairs)
 gold_dataset.save_to_disk("data/datasets/train_proxy_rated")
