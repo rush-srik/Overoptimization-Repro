@@ -2672,6 +2672,7 @@ gen = [
     { name = "transformers" },
     { name = "trl" },
     { name = "vllm", version = "0.26.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "wandb" },
 ]
 rl = [
     { name = "openrlhf", extra = ["vllm"], marker = "extra == 'group-7-overopt-rl'" },
@@ -2695,6 +2696,7 @@ gen = [
     { name = "transformers", specifier = ">=5.7" },
     { name = "trl", specifier = ">=1.9" },
     { name = "vllm", specifier = ">=0.26" },
+    { name = "wandb", specifier = ">=0.28.1" },
 ]
 rl = [{ name = "openrlhf", extras = ["vllm"], specifier = ">=0.10" }]
 
@@ -4307,7 +4309,8 @@ dependencies = [
     { name = "click" },
     { name = "packaging" },
     { name = "platformdirs" },
-    { name = "protobuf", version = "7.35.1", source = { registry = "https://pypi.org/simple" } },
+    { name = "protobuf", version = "6.33.6", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-7-overopt-gen'" },
+    { name = "protobuf", version = "7.35.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-7-overopt-rl'" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "requests" },

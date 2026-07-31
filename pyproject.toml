@@ -23,6 +23,7 @@ gen = [
     "trl>=1.9",
     "accelerate>=1.14",
     "datasets>=5.0",
+    "wandb>=0.28.1",
 ]
 
 rl = ["openrlhf[vllm]>=0.10"]
