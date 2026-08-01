@@ -59,6 +59,8 @@ gold_pairs = {
 
 for rows in rows_by_prompt.values():
     for a, b in combinations(rows, 2):
+        if scores[a] == scores[b]: # Skip ties
+            continue
         chosen, rejected = (a, b) if scores[a] > scores[b] else (b, a)
         gold_pairs["prompt"].append(prompts[a])
         gold_pairs["chosen"].append(responses[chosen])

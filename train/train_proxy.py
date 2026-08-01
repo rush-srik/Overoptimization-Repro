@@ -1,3 +1,10 @@
+"""
+Trains a proxy reward model on the gold-labeled data.
+
+Run with: 'python -m train.train_proxy <proxy_size> <micro_batch_size> <eval_batch_size>'
+"""
+
+import torch
 from datasets import load_from_disk
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from trl import RewardTrainer, RewardConfig
@@ -16,7 +23,7 @@ val_ratio = 0.2
 lr = 5e-5
 micro_batch_size = int(sys.argv[2])
 effective_batch_size = 64
-eval_batch_size = 128
+eval_batch_size = int(sys.argv[3])
 
 assert effective_batch_size % micro_batch_size == 0
 grad_accum = effective_batch_size // micro_batch_size
@@ -29,7 +36,7 @@ seed = 42
 
 tokenizer = AutoTokenizer.from_pretrained(proxy_name)
 tokenizer.add_special_tokens({"pad_token": "[PAD]"})
-model = AutoModelForSequenceClassification.from_pretrained(proxy_name, num_labels=1)
+model = AutoModelForSequenceClassification.from_pretrained(proxy_name, num_labels=1, dtype=torch.float32)
 model.config.pad_token_id = tokenizer.pad_token_id
 
 rated_data = load_from_disk("data/datasets/train_proxy_rated")
