@@ -29,7 +29,7 @@ assert effective_batch_size % micro_batch_size == 0
 grad_accum = effective_batch_size // micro_batch_size
 
 max_length = 2048
-eval_steps = 100
+eval_steps = 200
 save_steps = 200
 
 seed = 42
