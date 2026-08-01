@@ -16,14 +16,14 @@ val_ratio = 0.2
 lr = 5e-5
 micro_batch_size = int(sys.argv[2])
 effective_batch_size = 64
-eval_batch_size=128
+eval_batch_size = 128
 
 assert effective_batch_size % micro_batch_size == 0
 grad_accum = effective_batch_size // micro_batch_size
 
 max_length = 2048
 eval_steps = 100
-save_steps = 100
+save_steps = 200
 
 seed = 42
 
