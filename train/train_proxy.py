@@ -21,6 +21,7 @@ project_name = "overopt"
 
 val_ratio = 0.2
 lr = 5e-5
+num_epochs = 1
 micro_batch_size = int(sys.argv[2])
 effective_batch_size = 64
 eval_batch_size = int(sys.argv[3])
@@ -55,6 +56,7 @@ args = RewardConfig(
     per_device_train_batch_size=micro_batch_size,
     per_device_eval_batch_size=eval_batch_size,
     gradient_accumulation_steps=grad_accum,
+    num_train_epochs=num_epochs,
 
     # Logging
     output_dir=f"runs/proxy/{proxy_size}",

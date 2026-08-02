@@ -54,7 +54,9 @@ for row, idx in enumerate(entry_idx):
 gold_pairs = {
     "prompt": [],
     "chosen": [],
-    "rejected": []
+    "rejected": [],
+    "chosen_score": [],
+    "rejected_score": [],
 }
 
 for rows in rows_by_prompt.values():
@@ -66,9 +68,10 @@ for rows in rows_by_prompt.values():
         gold_pairs["prompt"].append(prompts[a])
         gold_pairs["chosen"].append(responses[chosen])
         gold_pairs["rejected"].append(responses[rejected])
+        gold_pairs["chosen_score"].append(scores[chosen])
+        gold_pairs["rejected_score"].append(scores[rejected])
 
-
-print(f"[done] {len(gold_pairs["prompt"])} preference pairs recorded.")
+print(f"[done] {len(gold_pairs['prompt'])} preference pairs recorded.")
 
 gold_dataset = Dataset.from_dict(gold_pairs)
 gold_dataset.save_to_disk("data/datasets/train_proxy_rated")
