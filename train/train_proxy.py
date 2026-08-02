@@ -1,7 +1,7 @@
 """
 Trains a proxy reward model on the gold-labeled data.
 
-Run with: 'python -m train.train_proxy <proxy_size> <micro_batch_size> <eval_batch_size>'
+Run with: 'python -m train.train_proxy_qwen <proxy_size> <micro_batch_size> <eval_batch_size>'
 """
 
 import torch
@@ -9,18 +9,19 @@ from datasets import load_from_disk
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from trl import RewardTrainer, RewardConfig
 import random
-from utils.utils import apply_proxy_chat_template
 import wandb
 import sys
 
-proxy_family_name = "EleutherAI/pythia"
+proxy_family_name = "Qwen/Qwen2.5"
 proxy_size = sys.argv[1]
 proxy_name = f"{proxy_family_name}-{proxy_size}"
 
 project_name = "overopt"
 
 val_ratio = 0.1
-lr = 5e-5
+warmup_steps = 100
+lr = sys.argv[4]
+beta2 = 0.95
 num_epochs = 1
 micro_batch_size = int(sys.argv[2])
 effective_batch_size = 64
@@ -31,7 +32,6 @@ grad_accum = effective_batch_size // micro_batch_size
 
 max_length = 2048
 eval_steps = 200
-save_steps = 200
 
 seed = 42
 
@@ -40,8 +40,23 @@ tokenizer.add_special_tokens({"pad_token": "[PAD]"})
 model = AutoModelForSequenceClassification.from_pretrained(proxy_name, num_labels=1, dtype=torch.float32)
 model.config.pad_token_id = tokenizer.pad_token_id
 
-rated_data = load_from_disk("data/datasets/train_proxy_rated")
-rated_data = rated_data.map(apply_proxy_chat_template)
+def apply_qwen_chat_template(entry):
+    """
+    Applies the Qwen chat template to a single entry in the dataset.
+    Appends the <|im_end|> token to the end of the continuations.
+    """
+    return {
+        "prompt": tokenizer.apply_chat_template(
+            [{"role": "user", "content": entry["prompt"]}],
+            tokenize=False,
+            add_generation_prompt=True,
+        ),
+        "chosen": entry["chosen"].strip() + "<|im_end|>",
+        "rejected": entry["rejected"].strip() + "<|im_end|>",
+    }
+
+rated_data = load_from_disk("data/datasets/train_proxy_rated").remove_columns(["chosen_score", "rejected_score"])
+rated_data = rated_data.map(apply_qwen_chat_template)
 
 prompts = sorted(set(rated_data["prompt"]))
 random.Random(seed).shuffle(prompts)
@@ -53,6 +68,8 @@ train_data = rated_data.filter(lambda ex: ex["prompt"] not in val_prompts)
 args = RewardConfig(
     # Training
     learning_rate=lr,
+    adam_beta2=beta2,
+    warmup_steps=warmup_steps,
     per_device_train_batch_size=micro_batch_size,
     per_device_eval_batch_size=eval_batch_size,
     gradient_accumulation_steps=grad_accum,
@@ -67,7 +84,7 @@ args = RewardConfig(
     max_length=max_length,
     eval_strategy="steps",
     eval_steps=eval_steps,
-    save_steps=save_steps,
+    save_strategy="no",
     seed=seed,
 )
 
@@ -82,7 +99,7 @@ trainer = RewardTrainer(
 wandb.init(
     project=project_name,
     name=f"proxy-{proxy_size}",
-    group="proxy",
+    group="proxy-qwen",
     config={"lr": lr, "effective_batch": effective_batch_size}
 )
 
