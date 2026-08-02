@@ -20,7 +20,7 @@ project_name = "overopt"
 
 val_ratio = 0.1
 warmup_steps = 100
-lr = sys.argv[4]
+lr = float(sys.argv[4])
 beta2 = 0.95
 num_epochs = 1
 micro_batch_size = int(sys.argv[2])
@@ -43,7 +43,6 @@ model.config.pad_token_id = tokenizer.pad_token_id
 def apply_qwen_chat_template(entry):
     """
     Applies the Qwen chat template to a single entry in the dataset.
-    Appends the <|im_end|> token to the end of the continuations.
     """
     return {
         "prompt": tokenizer.apply_chat_template(
@@ -51,8 +50,8 @@ def apply_qwen_chat_template(entry):
             tokenize=False,
             add_generation_prompt=True,
         ),
-        "chosen": entry["chosen"].strip() + "<|im_end|>",
-        "rejected": entry["rejected"].strip() + "<|im_end|>",
+        "chosen": entry["chosen"].strip(),
+        "rejected": entry["rejected"].strip(),
     }
 
 rated_data = load_from_disk("data/datasets/train_proxy_rated").remove_columns(["chosen_score", "rejected_score"])
@@ -82,6 +81,7 @@ args = RewardConfig(
 
     # Misc
     max_length=max_length,
+    eos_token="<|im_end|>",
     eval_strategy="steps",
     eval_steps=eval_steps,
     save_strategy="no",
