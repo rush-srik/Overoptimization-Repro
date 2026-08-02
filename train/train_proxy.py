@@ -19,7 +19,7 @@ proxy_name = f"{proxy_family_name}-{proxy_size}"
 
 project_name = "overopt"
 
-val_ratio = 0.2
+val_ratio = 0.1
 lr = 5e-5
 num_epochs = 1
 micro_batch_size = int(sys.argv[2])
