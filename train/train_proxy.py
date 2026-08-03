@@ -81,6 +81,8 @@ train_data = rated_data.filter(lambda ex: ex["prompt"] not in val_prompts)
 fsdp = []
 fsdp_config = {}
 if world_size > 1:
+    os.environ["FSDP_STATE_DICT_TYPE"] = "FULL_STATE_DICT"
+
     fsdp = ["full_shard", "auto_wrap"]
     fsdp_config = {
         "version": 2,
