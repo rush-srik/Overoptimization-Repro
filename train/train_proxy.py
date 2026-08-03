@@ -1,9 +1,15 @@
 """
 Trains a proxy reward model on the gold-labeled data.
 
-Run with: 'python -m train.train_proxy_qwen <proxy_size> <micro_batch_size> <eval_batch_size>'
+Single GPU:
+    python -m train.train_proxy <proxy_size> <micro_bs> <eval_bs> <lr> [grad_ckpt]
+
+Multi-GPU:
+    torchrun --standalone --nproc_per_node=N \
+        -m train.train_proxy <proxy_size> <micro_bs> <eval_bs> <lr> [grad_ckpt]
 """
 
+import os
 import torch
 from datasets import load_from_disk
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -26,9 +32,17 @@ num_epochs = 1
 micro_batch_size = int(sys.argv[2])
 effective_batch_size = 64
 eval_batch_size = int(sys.argv[3])
+grad_ckpt = bool(int(sys.argv[5])) if len(sys.argv) > 5 else False
 
-assert effective_batch_size % micro_batch_size == 0
-grad_accum = effective_batch_size // micro_batch_size
+world_size = int(os.environ.get("WORLD_SIZE", 1))
+rank = int(os.environ.get("RANK", 0))
+
+per_step = micro_batch_size * world_size
+assert effective_batch_size % per_step == 0, (
+    f"effective batch {effective_batch_size} not divisible by "
+    f"micro_bs {micro_batch_size} x world_size {world_size}"
+)
+grad_accum = effective_batch_size // per_step
 
 max_length = 2048
 eval_steps = 200
@@ -64,6 +78,16 @@ val_prompts = set(prompts[: int(val_ratio * len(prompts))])
 val_data   = rated_data.filter(lambda ex: ex["prompt"] in val_prompts)
 train_data = rated_data.filter(lambda ex: ex["prompt"] not in val_prompts)
 
+fsdp = []
+fsdp_config = {}
+if world_size > 1:
+    fsdp = ["full_shard", "auto_wrap"]
+    fsdp_config = {
+        "version": 2,
+        "transformer_layer_cls_to_wrap": ["Qwen2DecoderLayer"],
+        "activation_checkpointing": grad_ckpt,
+    }
+
 args = RewardConfig(
     # Training
     learning_rate=lr,
@@ -73,6 +97,13 @@ args = RewardConfig(
     per_device_eval_batch_size=eval_batch_size,
     gradient_accumulation_steps=grad_accum,
     num_train_epochs=num_epochs,
+
+    # Sharding / activation memory
+    fsdp=fsdp,
+    fsdp_config=fsdp_config,
+    gradient_checkpointing=grad_ckpt and world_size == 1,
+    gradient_checkpointing_kwargs={"use_reentrant": False},
+    ddp_find_unused_parameters=False,
 
     # Logging
     output_dir=f"runs/proxy/{proxy_size}",
@@ -96,12 +127,19 @@ trainer = RewardTrainer(
     eval_dataset=val_data
 )
 
-wandb.init(
-    project=project_name,
-    name=f"proxy-{proxy_size}",
-    group="proxy-qwen",
-    config={"lr": lr, "effective_batch": effective_batch_size}
-)
+if rank == 0:
+    wandb.init(
+        project=project_name,
+        name=f"proxy-{proxy_size}",
+        group="proxy-qwen",
+        config={
+            "lr": lr,
+            "effective_batch": effective_batch_size,
+            "micro_batch": micro_batch_size,
+            "world_size": world_size,
+            "grad_ckpt": grad_ckpt,
+        }
+    )
 
 trainer.train()
 trainer.save_model(f"models/proxy/{proxy_size}")
