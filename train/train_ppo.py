@@ -1,40 +1,64 @@
 """
 Train the policy using PPO with the proxy RM as the reward model.
+
+Single GPU:
+    python -m train.train_ppo <proxy_size> <micro_bs> <eval_bs> <lr> <grad_ckpt> <seed>
+
+Multi-GPU:
+    torchrun --standalone --nproc_per_node=N \
+        -m train.train_ppo <proxy_size> <micro_bs> <eval_bs> <lr> <grad_ckpt> <seed>
 """
 
-import torch
+import os
 from copy import deepcopy
-from trl.experimental import PPOTrainer, PPOConfig
+from trl.experimental.ppo import PPOTrainer, PPOConfig
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequenceClassification
 from datasets import load_from_disk
+import sys
+import wandb
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+project_name = "overopt"
 
 policy_name = "Qwen/Qwen2.5-1.5B-Instruct"
 
-proxy_size = "14m"
-seed = 42
+proxy_size = sys.argv[1]
+seed = int(sys.argv[6])
 
 val_ratio = 0.1
-learning_rate = 5e-6
-num_epochs = 1
-micro_batch_size = 16
-effective_batch_size = 64
-eval_batch_size = 64
+warmup_steps = 100
+lr = float(sys.argv[4])
+temperature = 1.0
+gae_lambda = 0.95
+kl_estimator = "k3"
+ppo_clip = 0.2
+num_episodes = 1
+num_ppo_epochs = 1
+micro_batch_size = int(sys.argv[2])
+effective_batch_size = 256
+eval_batch_size = int(sys.argv[3])
+grad_ckpt = bool(int(sys.argv[5])) if len(sys.argv) > 5 else False
 
-assert effective_batch_size % micro_batch_size == 0
-grad_accum = effective_batch_size // micro_batch_size
+world_size = int(os.environ.get("WORLD_SIZE", 1))
+rank = int(os.environ.get("RANK", 0))
+
+per_step = micro_batch_size * world_size
+assert effective_batch_size % per_step == 0, (
+    f"effective batch {effective_batch_size} not divisible by "
+    f"micro_bs {micro_batch_size} x world_size {world_size}"
+)
+grad_accum = effective_batch_size // per_step
 
 max_response_length = 900
+missing_eos_penalty = 1.0
 
-policy = AutoModelForCausalLM.from_pretrained(policy_name, device_map=device)
+policy = AutoModelForCausalLM.from_pretrained(policy_name)
 policy_tokenizer = AutoTokenizer.from_pretrained(policy_name)
 policy_tokenizer.padding_side = "left"
 
 ref_model = deepcopy(policy)
-value_model = AutoModelForSequenceClassification.from_pretrained(policy_name, num_labels=1, device_map=device)
+value_model = AutoModelForSequenceClassification.from_pretrained(policy_name, num_labels=1)
 
-proxy_rm = AutoModelForSequenceClassification.from_pretrained(f"models/proxy/{proxy_size}", device_map=device)
+proxy_rm = AutoModelForSequenceClassification.from_pretrained(f"models/proxy/{proxy_size}")
 
 data = [entry["prompt"] for entry in load_from_disk("data/datasets/train_ppo")]
 
@@ -50,23 +74,45 @@ n = int(val_ratio * len(data))
 train_data = ppo_data[n:]
 val_data = ppo_data[:n]
 
+if world_size > 1:
+    os.environ["ACCELERATE_USE_FSDP"] = "true"
+    os.environ["FSDP_VERSION"] = "2"
+    os.environ["FSDP_AUTO_WRAP_POLICY"] = "TRANSFORMER_BASED_WRAP"
+    os.environ["FSDP_TRANSFORMER_CLS_TO_WRAP"] = "Qwen2DecoderLayer"
+    os.environ["FSDP_ACTIVATION_CHECKPOINTING"] = "1" if grad_ckpt else "0"
+    os.environ["FSDP_STATE_DICT_TYPE"] = "FULL_STATE_DICT"
+
 config = PPOConfig(
     # Training
-    kl_estimator="k3",
+    temperature=temperature,
+    kl_estimator=kl_estimator,
     kl_coef=0.0,
-    learning_rate=learning_rate,
+    cliprange=ppo_clip,
+    lam=gae_lambda,
+    learning_rate=lr,
+    warmup_steps=warmup_steps,
     per_device_train_batch_size=micro_batch_size,
     per_device_eval_batch_size=eval_batch_size,
     gradient_accumulation_steps=grad_accum,
-    num_train_epochs=num_epochs,
+    num_ppo_epochs=num_ppo_epochs,
+    num_train_epochs=num_episodes,
+
+    # Sharding / activation memory
+    gradient_checkpointing=grad_ckpt and world_size == 1,
+    gradient_checkpointing_kwargs={"use_reentrant": False},
+    ddp_find_unused_parameters=False,
 
     # Logging
     output_dir=f"runs/ppo/{proxy_size}/{seed}",
     report_to=["wandb"],
-    seed=seed,
+    eval_strategy="steps",
+    save_strategy="no",
 
     # Misc
     response_length=max_response_length,
+    missing_eos_penalty=missing_eos_penalty,
+    stop_token="eos",
+    seed=seed,
 )
 
 trainer = PPOTrainer(
@@ -80,4 +126,29 @@ trainer = PPOTrainer(
     eval_dataset=val_data
 )
 
+if rank == 0:
+    wandb.init(
+        project=project_name,
+        name=f"ppo-{proxy_size}-{seed}",
+        group="ppo",
+        config={
+            "lr": lr,
+            "effective_batch": effective_batch_size,
+            "micro_batch": micro_batch_size,
+            "world_size": world_size,
+            "grad_ckpt": grad_ckpt,
+            "gae_lambda": gae_lambda,
+            "kl_estimator": kl_estimator,
+            "ppo_clip": ppo_clip,
+            "temperature": temperature,
+            "num_episodes": num_episodes,
+            "num_ppo_epochs": num_ppo_epochs,
+            "micro_batch_size": micro_batch_size,
+            "effective_batch_size": effective_batch_size,
+            "eval_batch_size": eval_batch_size,
+            "grad_ckpt": grad_ckpt
+        }
+    )
+
 trainer.train()
+trainer.save_model(f"models/ppo/{proxy_size}/{seed}")
