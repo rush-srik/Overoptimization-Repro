@@ -12,7 +12,7 @@ from scipy.optimize import curve_fit
 from datasets import load_from_disk
 
 proxy_sizes = ["0.5B", "1.5B", "3B"]
-steps = [0, 1, 2, 4, 8, 16, 32, 64, 116]
+steps = [0, 4, 10, 20, 30, 40, 50, 60]
 gen_dir = "runs/ppo"
 out_dir = "results/figures"
 n_bootstrap = 1000

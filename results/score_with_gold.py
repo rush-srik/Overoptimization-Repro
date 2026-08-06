@@ -11,7 +11,7 @@ from datasets import load_from_disk
 gold_name = "Skywork/Skywork-Reward-V2-Llama-3.1-8B"
 gen_dir = "runs/ppo"
 proxy_sizes = ["0.5B", "1.5B", "3B"]
-steps = [0, 1, 2, 4, 8, 16, 32, 64, 116]
+steps = [0, 4, 10, 20, 30, 40, 50, 60]
 
 scoring_batch_size = 32
 

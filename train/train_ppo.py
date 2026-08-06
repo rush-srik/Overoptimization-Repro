@@ -104,7 +104,7 @@ rollout_forward_batch_size = int(sys.argv[3])
 gen_batch_size = int(sys.argv[7]) if len(sys.argv) > 7 else None
 score_batch_size = 8
 effective_batch_size = 256
-max_updates = 116
+max_updates = 60
 eval_batch_size = int(sys.argv[4])
 grad_ckpt = bool(int(sys.argv[6])) if len(sys.argv) > 6 else False
 grad_clipping = 2.0
@@ -119,7 +119,7 @@ assert effective_batch_size % per_step == 0, (
 )
 grad_accum = effective_batch_size // per_step
 
-max_response_length = 512
+max_response_length = 900
 missing_eos_penalty = 1.0
 
 policy = AutoModelForCausalLM.from_pretrained(policy_name)
@@ -154,11 +154,12 @@ export_prompts = [policy_tokenizer.apply_chat_template(
 ) for prompt in export_prompts_raw]
 
 export_stride = eval_batch_size * world_size
-n_export = (len(export_prompts_raw) // export_stride) * export_stride
+n_export_target = 1280
+n_export = (min(n_export_target, len(export_prompts_raw)) // export_stride) * export_stride
 
 total_updates = math.ceil(num_episodes * len(train_data) / effective_batch_size)
 
-export_steps = [s for s in (1, 2, 4, 8, 16, 32, 64, 128, 256, 512) if s < total_updates]
+export_steps = [s for s in (4, 10, 20, 30, 40, 50) if s < total_updates]
 export_steps.append(total_updates)
 
 hidden_size = policy.config.hidden_size
@@ -329,6 +330,7 @@ config = PPOConfig(
     lam=gae_lambda,
     learning_rate=lr,
     warmup_steps=warmup_steps,
+    lr_scheduler_type="constant_with_warmup",
     per_device_train_batch_size=micro_batch_size,
     per_device_eval_batch_size=eval_batch_size,
     gradient_accumulation_steps=grad_accum,
