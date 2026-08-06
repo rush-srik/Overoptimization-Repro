@@ -98,6 +98,7 @@ kl_estimator = "k3"
 ppo_clip = 0.2
 num_episodes = 1
 num_ppo_epochs = 1
+num_mini_batches = 32
 micro_batch_size = int(sys.argv[2])
 rollout_forward_batch_size = int(sys.argv[3])
 gen_batch_size = int(sys.argv[7]) if len(sys.argv) > 7 else None
@@ -106,6 +107,7 @@ effective_batch_size = 256
 max_updates = 116
 eval_batch_size = int(sys.argv[4])
 grad_ckpt = bool(int(sys.argv[6])) if len(sys.argv) > 6 else False
+grad_clipping = 2.0
 
 world_size = int(os.environ.get("WORLD_SIZE", 1))
 rank = int(os.environ.get("RANK", 0))
@@ -172,8 +174,8 @@ ds_config = {
         "stage3_gather_16bit_weights_on_model_save": True,
     },
     "train_micro_batch_size_per_gpu": micro_batch_size,
-    "gradient_accumulation_steps": grad_accum,
-    "gradient_clipping": 1.0,
+    "gradient_accumulation_steps": grad_accum // num_mini_batches,
+    "gradient_clipping": grad_clipping,
     "steps_per_print": 10 ** 9,
     "bf16": {"enabled": True},
     "fp16": {"enabled": False},
@@ -332,6 +334,7 @@ config = PPOConfig(
     gradient_accumulation_steps=grad_accum,
     num_ppo_epochs=num_ppo_epochs,
     num_train_epochs=num_episodes,
+    num_mini_batches=num_mini_batches,
 
     # Sharding / activation memory.
     bf16=True,
