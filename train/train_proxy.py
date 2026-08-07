@@ -24,6 +24,7 @@ proxy_name = f"{proxy_family_name}-{proxy_size}"
 
 project_name = "overopt"
 
+n_sequences = 4_000
 val_ratio = 0.1
 warmup_steps = 100
 lr = float(sys.argv[4])
@@ -69,6 +70,7 @@ def apply_qwen_chat_template(entry):
     }
 
 rated_data = load_from_disk("data/datasets/train_proxy_rated").remove_columns(["chosen_score", "rejected_score"])
+rated_data = rated_data.select(range(n_sequences))
 rated_data = rated_data.map(apply_qwen_chat_template)
 
 prompts = sorted(set(rated_data["prompt"]))
