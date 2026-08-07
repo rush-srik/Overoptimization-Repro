@@ -14,7 +14,7 @@ scoring_batch_size = 32
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-model = AutoModelForSequenceClassification.from_pretrained(f"models/proxy/{proxy_size}", dtype=torch.float32, device_map=device)
+model = AutoModelForSequenceClassification.from_pretrained(f"models/proxy/{proxy_size}", dtype=torch.bfloat16, device_map=device)
 tokenizer = AutoTokenizer.from_pretrained(f"models/proxy/{proxy_size}")
 
 generations = load_from_disk("data/datasets/bon_completions")

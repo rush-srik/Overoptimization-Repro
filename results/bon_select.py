@@ -1,5 +1,6 @@
 """
-Turn the proxy and gold-scored BoN generations into points.
+Select completions by proxy score and collect 
+proxy vs. gold data for plotting.
 Writes 'runs/bon/<proxy_size>/gen/n-<n>' to disk.
 """
 
@@ -9,8 +10,8 @@ import numpy as np
 from scipy.special import gammaln
 from datasets import load_from_disk, Dataset
 
-proxy_sizes = ["0.5B", "1.5B", "3B"]
-n_points = [1, 2, 4, 8, 16, 32, 64]
+proxy_sizes = ["0.5B-500", "0.5B-1k", "0.5B-4k", "0.5B-8k", "0.5B"]
+n_points = [1, 2, 4, 8, 16, 32, 64, 128]
 gold_path = "data/datasets/bon_scored"
 out_dir = "runs/bon"
 
@@ -73,6 +74,8 @@ for proxy_size in proxy_sizes:
                 "kl": float(kl),
                 "gold_score_mean": float(gold_at_n.mean()),
                 "proxy_score_mean": float(proxy_at_n.mean()),
+                "gold_sd": float(gold_scores.std(1).mean()),
+                "proxy_sd": float(proxy_scores.std(1).mean()),
                 "proxy_size": proxy_size,
                 "n_prompts": int(n_prompts),
             }, f, indent=2)

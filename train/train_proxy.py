@@ -2,14 +2,15 @@
 Trains a proxy reward model on the gold-labeled data.
 
 Single GPU:
-    python -m train.train_proxy <proxy_size> <micro_bs> <eval_bs> <lr> [grad_ckpt]
+    python -m train.train_proxy <proxy_size> <micro_bs> <eval_bs> <lr> <grad_ckpt> <n_sequences>
 
 Multi-GPU:
     torchrun --standalone --nproc_per_node=N \
-        -m train.train_proxy <proxy_size> <micro_bs> <eval_bs> <lr> [grad_ckpt]
+        -m train.train_proxy <proxy_size> <micro_bs> <eval_bs> <lr> <grad_ckpt> <n_sequences>
 """
 
 import os
+import math
 import torch
 from datasets import load_from_disk
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -24,9 +25,8 @@ proxy_name = f"{proxy_family_name}-{proxy_size}"
 
 project_name = "overopt"
 
-n_sequences = 4_000
+n_sequences = int(sys.argv[6])
 val_ratio = 0.1
-warmup_steps = 100
 lr = float(sys.argv[4])
 beta2 = 0.95
 num_epochs = 1
@@ -46,7 +46,13 @@ assert effective_batch_size % per_step == 0, (
 grad_accum = effective_batch_size // per_step
 
 max_length = 2048
-eval_steps = 200
+
+total_steps = math.ceil((1 - val_ratio) * n_sequences / effective_batch_size)
+warmup_steps = max(1, round(0.12 * total_steps))
+eval_steps = max(1, total_steps // 8)
+
+tag = (f"{proxy_size}-{n_sequences // 1000}k" if n_sequences >= 1000
+       else f"{proxy_size}-{n_sequences}")
 
 seed = 42
 
@@ -70,7 +76,7 @@ def apply_qwen_chat_template(entry):
     }
 
 rated_data = load_from_disk("data/datasets/train_proxy_rated").remove_columns(["chosen_score", "rejected_score"])
-rated_data = rated_data.select(range(n_sequences))
+rated_data = rated_data.select(range(min(n_sequences, len(rated_data))))
 rated_data = rated_data.map(apply_qwen_chat_template)
 
 prompts = sorted(set(rated_data["prompt"]))
@@ -110,9 +116,9 @@ args = RewardConfig(
     ddp_find_unused_parameters=False,
 
     # Logging
-    output_dir=f"runs/proxy/{proxy_size}",
+    output_dir=f"runs/proxy/{tag}",
     report_to=["wandb"],
-    run_name=f"proxy-{proxy_size}",
+    run_name=f"proxy-{tag}",
 
     # Misc
     max_length=max_length,
@@ -134,7 +140,7 @@ trainer = RewardTrainer(
 if rank == 0:
     wandb.init(
         project=project_name,
-        name=f"proxy-{proxy_size}",
+        name=f"proxy-{tag}",
         group="proxy-qwen",
         config={
             "lr": lr,
@@ -142,8 +148,10 @@ if rank == 0:
             "micro_batch": micro_batch_size,
             "world_size": world_size,
             "grad_ckpt": grad_ckpt,
+            "n_sequences": n_sequences,
+            "warmup_steps": warmup_steps,
         }
     )
 
 trainer.train()
-trainer.save_model(f"models/proxy/{proxy_size}")
+trainer.save_model(f"models/proxy/{tag}")

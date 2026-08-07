@@ -9,7 +9,7 @@ from datasets import Dataset, load_from_disk
 from vllm import LLM, SamplingParams
 
 policy_name = "Qwen/Qwen2.5-1.5B-Instruct"
-N = 64
+N = 128
 n_prompts = 1280
 max_continuation_length = 900
 seed = 42
