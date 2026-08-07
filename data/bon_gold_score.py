@@ -3,8 +3,6 @@ Score the BoN val generations with the gold RM and add gold scores to the datase
 Writes 'data/datasets/bon_scored' to disk.
 """
 
-import os
-import shutil
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from datasets import load_from_disk
